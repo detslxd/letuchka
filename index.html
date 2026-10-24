@@ -1,0 +1,110 @@
+<!doctype html>
+<html lang="ru"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Летучка</title>
+<script src="https://telegram.org/js/telegram-web-app.js"></script>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Golos+Text:wght@400;500;600&family=Unbounded:wght@600&display=swap">
+<style>
+/* Страница-вход «Летучки»: стабильный адрес на GitHub Pages. Проверяет, жив ли бот, и пускает в мини-приложение
+   или показывает, что бот офлайн. Адрес туннеля берётся из status.json, который публикует бот. */
+:root {
+  --bg: #f3f5f9; --surface: #ffffff; --line: #dfe3ec; --fg: #171b26; --muted: #5d6578;
+  --accent: #2f4fd8; --accent-soft: #e6ebfd; --plane: #f2a900;
+  --font-display: "Unbounded", "Golos Text", system-ui, sans-serif;
+  --font-body: "Golos Text", system-ui, -apple-system, "Segoe UI", sans-serif;
+}
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) { --bg: #0b0e15; --surface: #161a24; --line: #2a3040; --fg: #e8ebf3; --muted: #9aa3b8; --accent: #8ea2ff; --accent-soft: #232b4a; color-scheme: dark; }
+}
+:root[data-theme="dark"] { --bg: #0b0e15; --surface: #161a24; --line: #2a3040; --fg: #e8ebf3; --muted: #9aa3b8; --accent: #8ea2ff; --accent-soft: #232b4a; color-scheme: dark; }
+* { box-sizing: border-box; }
+[hidden] { display: none !important; }
+html, body { margin: 0; height: 100%; }
+body { background: var(--bg); color: var(--fg); font: 16px/1.5 var(--font-body);
+  display: grid; place-items: center; padding: max(16px, env(safe-area-inset-top)) max(16px, env(safe-area-inset-right)) max(16px, env(safe-area-inset-bottom)) max(16px, env(safe-area-inset-left)); }
+.card { width: min(420px, 100%); background: var(--surface); border: 1px solid var(--line); border-radius: 20px;
+  padding: 28px 24px; display: grid; gap: 14px; text-align: center; }
+.logo { font-family: "Franklin Gothic Medium", var(--font-display); font-size: 54px; line-height: 1; color: var(--accent); position: relative; justify-self: center; }
+.logo::after { content: ""; position: absolute; right: -22px; top: -4px; border-left: 18px solid transparent; border-bottom: 12px solid var(--plane); transform: rotate(-18deg); }
+h1 { font-family: var(--font-display); font-weight: 600; font-size: 22px; margin: 4px 0 0; text-wrap: balance; }
+p { margin: 0; color: var(--muted); }
+.spinner { width: 28px; height: 28px; border-radius: 50%; border: 3px solid var(--accent-soft); border-top-color: var(--accent);
+  justify-self: center; animation: spin 0.9s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+.btn { border: 0; border-radius: 12px; padding: 12px 16px; font: 600 15px var(--font-body); cursor: pointer;
+  background: var(--accent); color: var(--surface); }
+.btn.ghost { background: var(--accent-soft); color: var(--accent); }
+.btn:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.meta { font-size: 13px; }
+</style>
+</head><body>
+<main class="card" aria-live="polite">
+  <div class="logo" aria-hidden="true">Л</div>
+  <section id="loading">
+    <h1>Подключаюсь к Летучке…</h1>
+    <p>Секунду, проверяю, что бот на связи.</p>
+    <div class="spinner" role="status" aria-label="Загрузка" style="margin-top:14px"></div>
+  </section>
+  <section id="offline" hidden>
+    <h1>Летучка сейчас офлайн 😴</h1>
+    <p>Бот работает на компьютере автора, и прямо сейчас он выключен или переподключается. Обычно это ненадолго — загляни чуть позже.</p>
+    <p class="meta" id="seen"></p>
+    <div style="display:grid; gap:8px; margin-top:6px">
+      <button class="btn" id="retry" type="button">Проверить ещё раз</button>
+      <button class="btn ghost" id="close" type="button">Закрыть</button>
+    </div>
+  </section>
+</main>
+<script>
+(() => {
+  const tg = window.Telegram && window.Telegram.WebApp;
+  if (tg) {
+    try { tg.ready(); tg.expand(); } catch (e) {}
+    if (tg.colorScheme) document.documentElement.setAttribute("data-theme", tg.colorScheme);
+  }
+  const $ = (id) => document.getElementById(id);
+
+  function fmt(iso) {
+    const d = new Date(iso);
+    if (isNaN(d)) return "";
+    return d.toLocaleString("ru-RU", { day: "numeric", month: "long", hour: "2-digit", minute: "2-digit" });
+  }
+
+  function showOffline(status) {
+    $("loading").hidden = true;
+    $("offline").hidden = false;
+    const when = status && status.stopped_at;   // есть, только если бот выключили штатно
+    $("seen").textContent = when ? `Последний раз на связи: ${fmt(when)}` : "";
+  }
+
+  async function withTimeout(promise, ms) {
+    return Promise.race([promise, new Promise((_, rej) => setTimeout(() => rej(new Error("timeout")), ms))]);
+  }
+
+  async function go() {
+    $("loading").hidden = false;
+    $("offline").hidden = true;
+    let status = null;
+    try {
+      const r = await withTimeout(fetch("status.json?ts=" + Date.now(), { cache: "no-store" }), 6000);
+      status = await r.json();
+    } catch (e) { showOffline(null); return; }
+    if (!status || !status.url || status.online === false) { showOffline(status); return; }
+    const base = status.url.replace(/\/+$/, "");
+    try {
+      const r = await withTimeout(fetch(base + "/health?ts=" + Date.now(), { cache: "no-store" }), 6000);
+      if (!r.ok) throw new Error("bad status");
+      // Пускаем в мини-приложение; хэш с данными Telegram (#tgWebAppData=…) передаём дальше — по нему идёт проверка доступа.
+      location.replace(base + "/" + location.search + location.hash);
+    } catch (e) {
+      showOffline(status);
+    }
+  }
+
+  $("retry").addEventListener("click", go);
+  $("close").addEventListener("click", () => { if (tg) tg.close(); else history.back(); });
+  go();
+})();
+</script>
+</body></html>
